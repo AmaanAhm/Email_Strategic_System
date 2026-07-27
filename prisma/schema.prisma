@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth.js adapter models ----------
+
+model User {
+  id            String     @id @default(cuid())
+  name          String?
+  email         String?    @unique
+  emailVerified DateTime?
+  image         String?
+  needsReauth   Boolean    @default(false)
+  accounts      Account[]
+  sessions      Session[]
+  contacts      Contact[]
+  contactGroups ContactGroup[]
+  campaigns     Campaign[]
+  senders       SenderIdentity[]
+}
+
+// A connected Google account authorized to send email. Distinct from the
+// Auth.js `Account` (which backs login/session) so that connecting or removing
+// a sending identity can never disturb authentication. The user's login Google
+// account is backfilled here as the initial default sender.
+model SenderIdentity {
+  id            String    @id @default(cuid())
+  userId        String
+  email         String
+  name          String?
+  // Google profile photo URL (from the id_token `picture` claim / userinfo).
+  image         String?
+  // Google account id ("sub" / providerAccountId) — the stable per-account key.
+  googleSub     String
+  refresh_token String    @db.Text
+  access_token  String?   @db.Text
+  expires_at    Int?
+  scope         String?
+  isDefault     Boolean   @default(false)
+  needsReauth   Boolean   @default(false)
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@unique([userId, email])
+  @@unique([userId, googleSub])
+  @@index([userId])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- Domain models ----------
+
+model ContactGroup {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contacts Contact[]
+
+  @@index([userId])
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  userId    String
+  groupId   String
+  name      String
+  company   String
+  email     String
+  website   String?
+  industry  String?
+  createdAt DateTime @default(now())
+
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group      ContactGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  recipients CampaignRecipient[]
+
+  @@unique([groupId, email])
+  @@index([userId, createdAt])
+  @@index([groupId])
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model Campaign {
+  id                String         @id @default(cuid())
+  userId            String
+  name              String
+  masterSubject     String
+  masterBody        String         @db.Text
+  subjectVariations String[]
+  pdfPath           String?
+  pdfFileName       String?
+  timezone          String         @default("Asia/Kolkata")
+  startAt           DateTime
+  workStartHour     Int            @default(9)
+  workEndHour       Int            @default(18)
+  minDelaySeconds   Int            @default(120)
+  maxDelaySeconds   Int            @default(480)
+  dailyLimit        Int            @default(100)
+  status            CampaignStatus @default(DRAFT)
+  senderIdentityId  String?
+  createdAt         DateTime       @default(now())
+  launchedAt        DateTime?
+  completedAt       DateTime?
+
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderIdentity SenderIdentity?     @relation(fields: [senderIdentityId], references: [id], onDelete: SetNull)
+  recipients     CampaignRecipient[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+  @@index([senderIdentityId])
+}
+
+enum RecipientStatus {
+  PENDING
+  SCHEDULED
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model CampaignRecipient {
+  id             String          @id @default(cuid())
+  campaignId     String
+  contactId      String?
+  // Snapshot of the contact at launch time (immune to later edits/deletes)
+  name           String
+  company        String
+  email          String
+  website        String?
+  industry       String?
+  status         RecipientStatus @default(PENDING)
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  finalSubject   String?
+  finalBody      String?         @db.Text
+  usedFallback   Boolean         @default(false)
+  attemptCount   Int             @default(0)
+  lastError      String?         @db.Text
+  gmailMessageId String?
+  updatedAt      DateTime        @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, contactId])
+  @@index([status, scheduledAt])
+  @@index([campaignId, status])
+}

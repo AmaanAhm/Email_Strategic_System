@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but keep the placeholder template so contributors know what to set
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +41,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local env and uploads
+.env
+uploads/
+.scratch/
+
+# local postgres data cluster (never commit — huge + contains data)
+/.pgdata/
+
+# claude code config (not needed to run the app)
+.claude/
+
+# local test fixtures (contain personal emails; not needed to run the app)
+/contact-sheet.csv
+/test-contacts.csv
