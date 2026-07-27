@@ -2,14 +2,47 @@
 
 Personalized B2B email outreach powered by Claude and the official Gmail API.
 
-- **Import contacts** from CSV / Excel (Name, Company, Email, Website, Industry)
+- **Contact groups** — organize contacts into named groups; import CSV / Excel (Name, Company, Email, Website, Industry) per group, each with its own searchable table
+- **Multiple senders** — connect several Google accounts and pick which one a campaign sends from (used for the `From` and `Reply-To` headers)
 - **One master email** with `{{name}}`, `{{company}}`, `{{industry}}`, `{{website}}` variables
 - **AI rewriting** — Claude uniquely rewrites every email (subject, greeting, opening, body, CTA, closing) while keeping the meaning and a professional tone
 - **Subject variations** — multiple AI-generated subject lines, randomly rotated
 - **PDF attachment** — upload one report, attached to every email
 - **Safe scheduling** — start date/time, working-hours window, random delays, 100–150/day cap with automatic next-day continuation
-- **Dashboard & history** — Total Contacts, Scheduled, Sent, Failed, Remaining; per-recipient campaign status (Queued / Scheduled / Sent / Failed)
+- **Dashboard & history** — Total Contacts, Scheduled, Sent, Failed, Remaining; a send calendar with per-day breakdown; sender health; per-recipient campaign status (Queued / Scheduled / Sent / Failed)
 - Google OAuth sign-in, light/dark mode, responsive SaaS UI
+
+## Screenshots
+
+### Dashboard
+
+Stats, delivery rate, a send calendar (green dots mark days with sends) with a per-campaign breakdown, upcoming sends, and per-sender health.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Contacts — groups and group detail
+
+Contacts are organized into groups; each group has its own import and a searchable table.
+
+![Contact groups](docs/screenshots/contacts-groups.png)
+
+![Contacts inside a group](docs/screenshots/contact-group.png)
+
+### Campaigns
+
+Campaign list, per-campaign detail with recipient-level status, and the campaign builder.
+
+![Campaigns](docs/screenshots/campaigns.png)
+
+![Campaign detail](docs/screenshots/campaign-detail.png)
+
+![New campaign](docs/screenshots/new-campaign.png)
+
+### Senders
+
+Connect multiple Google accounts and choose a default.
+
+![Senders](docs/screenshots/senders.png)
 
 ## Stack
 
