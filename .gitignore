@@ -56,6 +56,3 @@ uploads/
 # local test fixtures (contain personal emails; not needed to run the app)
 /contact-sheet.csv
 /test-contacts.csv
-
-# app screenshots (kept locally; not needed to run or check out the app)
-/docs/

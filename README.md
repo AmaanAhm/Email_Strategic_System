@@ -12,6 +12,38 @@ Personalized B2B email outreach powered by Claude and the official Gmail API.
 - **Dashboard & history** — Total Contacts, Scheduled, Sent, Failed, Remaining; a send calendar with per-day breakdown; sender health; per-recipient campaign status (Queued / Scheduled / Sent / Failed)
 - Google OAuth sign-in, light/dark mode, responsive SaaS UI
 
+## Screenshots
+
+### Dashboard
+
+Stats, delivery rate, a send calendar (green dots mark days with sends) with a per-campaign breakdown, upcoming sends, and per-sender health.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Contacts — groups and group detail
+
+Contacts are organized into groups; each group has its own import and a searchable table.
+
+![Contact groups](docs/screenshots/contacts-groups.png)
+
+![Contacts inside a group](docs/screenshots/contact-group.png)
+
+### Campaigns
+
+Campaign list, per-campaign detail with recipient-level status, and the campaign builder.
+
+![Campaigns](docs/screenshots/campaigns.png)
+
+![Campaign detail](docs/screenshots/campaign-detail.png)
+
+![New campaign](docs/screenshots/new-campaign.png)
+
+### Senders
+
+Connect multiple Google accounts and choose a default.
+
+![Senders](docs/screenshots/senders.png)
+
 ## Stack
 
 Next.js 16 (App Router) · Tailwind CSS v4 · shadcn/ui · PostgreSQL + Prisma 6 · Redis + BullMQ · Auth.js v5 (Google OAuth) · Gmail API (`googleapis`) · Anthropic SDK (Claude Opus 4.8 by default)
