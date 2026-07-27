@@ -7,6 +7,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ImportDialog } from "@/components/contacts/import-dialog";
 import { DeleteGroupButton } from "@/components/contacts/delete-group-button";
 import {
+  SampleSheetButton,
+  SampleSheetNote,
+} from "@/components/contacts/sample-sheet";
+import {
   ContactsTable,
   type SerializedContact,
 } from "@/components/contacts/contacts-table";
@@ -69,7 +73,11 @@ export default async function ContactGroupPage({
                 Import a CSV or Excel file to fill “{group.name}”.
               </p>
             </div>
-            <ImportDialog groupId={groupId} triggerLabel="Import contacts" />
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <ImportDialog groupId={groupId} triggerLabel="Import contacts" />
+              <SampleSheetButton />
+            </div>
+            <SampleSheetNote className="max-w-xl" />
           </CardContent>
         </Card>
       ) : (

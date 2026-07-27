@@ -24,6 +24,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  SampleSheetButton,
+  SampleSheetNote,
+} from "@/components/contacts/sample-sheet";
 import type { ImportResult } from "@/lib/types";
 
 const EXPECTED_COLUMNS: { column: string; required: boolean; aliases: string }[] =
@@ -120,6 +124,14 @@ export function ImportDialog({
               <p className="text-xs text-muted-foreground">
                 Click to browse or drag and drop a file onto the field above.
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">Not sure about the format?</p>
+                <SampleSheetButton variant="secondary" />
+              </div>
+              <SampleSheetNote />
             </div>
 
             <div className="space-y-2">
