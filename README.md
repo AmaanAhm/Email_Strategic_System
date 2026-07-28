@@ -98,13 +98,23 @@ Fill in `.env`:
 | `OPENAI_API_KEY` | From https://platform.openai.com/api-keys |
 | `OPENAI_MODEL` | `gpt-5.5` (default; any chat model your account can reach works) |
 | `UPLOAD_DIR` | Where uploaded attachments are stored (default `./uploads`) |
+| `APP_URL` | Where the app is served, e.g. `http://localhost:3001`. **The port must match the one `npm run dev` / `npm start` binds** — it is used to build the Google OAuth redirect URIs, and a mismatch causes `Error 400: redirect_uri_mismatch` at sign-in. |
 
 ### 2. Google Cloud OAuth (Gmail sending)
 
 1. Create a project at https://console.cloud.google.com
 2. **APIs & Services → Library** → enable **Gmail API**
 3. **APIs & Services → OAuth consent screen** → External → fill app name/support email → add scope `https://www.googleapis.com/auth/gmail.send` → add your Google account(s) as **Test users** (test mode is fine for internal use)
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID** → Web application → Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID** → Web application. Add **both** authorized redirect URIs — the app uses two separate OAuth flows:
+
+   | URI | Used by |
+   |---|---|
+   | `http://localhost:3001/api/auth/callback/google` | Signing in |
+   | `http://localhost:3001/api/senders/connect/callback` | Connecting an extra sending account |
+
+   Also add `http://localhost:3001` under **Authorized JavaScript origins**.
+
+   The host and port must match `APP_URL` exactly — Google compares the redirect URI character for character. Running on a different port than the one registered is what produces `Error 400: redirect_uri_mismatch`.
 5. Copy the Client ID / Client secret into `.env`
 
 > `gmail.send` is a sensitive scope. In test mode up to 100 test users can sign in without Google verification; refresh tokens for test-mode apps expire after 7 days of inactivity unless the app is published.
