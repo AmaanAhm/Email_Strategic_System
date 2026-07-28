@@ -4,6 +4,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import type { CampaignStatus } from "@prisma/client";
 
 import { CampaignStatusBadge } from "@/components/status-badge";
+import { DeleteCampaignButton } from "@/components/campaigns/delete-campaign-button";
 import {
   Table,
   TableBody,
@@ -38,6 +39,9 @@ export function CampaignList({ campaigns }: { campaigns: CampaignListRow[] }) {
             <TableHead className="text-right">Failed</TableHead>
             <TableHead>Scheduled start</TableHead>
             <TableHead>Created</TableHead>
+            <TableHead className="w-12">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="[&_tr:nth-child(even)]:bg-muted/20">
@@ -80,6 +84,14 @@ export function CampaignList({ campaigns }: { campaigns: CampaignListRow[] }) {
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {format(campaign.createdAt, "d MMM yyyy")}
+              </TableCell>
+              <TableCell className="text-right">
+                <DeleteCampaignButton
+                  id={campaign.id}
+                  name={campaign.name}
+                  status={campaign.status}
+                  sent={campaign.sent}
+                />
               </TableCell>
             </TableRow>
           ))}

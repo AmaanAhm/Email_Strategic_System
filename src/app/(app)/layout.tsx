@@ -32,10 +32,13 @@ export default async function AppLayout({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const dbUser = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { needsReauth: true },
-  });
+  const [dbUser, draftCount] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { needsReauth: true },
+    }),
+    prisma.campaignDraft.count({ where: { userId: session.user.id } }),
+  ]);
 
   const displayName = session.user.name ?? session.user.email ?? "Account";
   const email = session.user.email ?? "";
@@ -43,7 +46,7 @@ export default async function AppLayout({
 
   return (
     <div className="min-h-screen bg-background">
-      <AppSidebar />
+      <AppSidebar draftCount={draftCount} />
       <div className="flex min-h-screen flex-col md:pl-60">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-sidebar-border bg-background/60 px-4 backdrop-blur-xl backdrop-saturate-150 md:px-6">
           <Breadcrumbs />

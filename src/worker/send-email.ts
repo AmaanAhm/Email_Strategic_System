@@ -4,11 +4,34 @@ import type { Job } from "bullmq";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import type { ContactRow, SendEmailJobData } from "@/lib/types";
-import { substituteVariables } from "@/lib/template";
+import {
+  hasUnresolvedPlaceholders,
+  substituteVariables,
+} from "@/lib/template";
+import { mimeTypeFor } from "@/lib/attachments";
 import { rewriteEmail } from "@/lib/ai";
 import { GmailSendError, findSentMessageId, sendGmail } from "@/lib/gmail";
 import { ReauthRequiredError } from "@/lib/google";
 import { getSenderForCampaign } from "@/lib/senders";
+
+/**
+ * Fail the recipient being processed and pause its campaign, so an author
+ * mistake costs one email rather than the whole list.
+ */
+async function failRecipientAndPause(
+  recipientId: string,
+  campaignId: string,
+  reason: string,
+): Promise<void> {
+  await prisma.campaignRecipient.updateMany({
+    where: { id: recipientId, status: "SENDING" },
+    data: { status: "FAILED", lastError: reason },
+  });
+  await prisma.campaign.updateMany({
+    where: { id: campaignId, status: { in: ["RUNNING", "SCHEDULED"] } },
+    data: { status: "PAUSED" },
+  });
+}
 
 export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
   const { recipientId } = job.data;
@@ -103,6 +126,22 @@ export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
     const body = substituteVariables(campaign.masterBody, recipientRow);
     const senderName = sender.name ?? sender.email;
 
+    // Campaigns created before author-time validation existed, or edited
+    // directly in the database, can still carry a broken placeholder. Sending
+    // literal "{{...}}" to a prospect is unrecoverable, so stop the whole
+    // campaign here instead of burning the rest of the list one email at a time.
+    if (
+      hasUnresolvedPlaceholders(subject) ||
+      hasUnresolvedPlaceholders(body)
+    ) {
+      await failRecipientAndPause(
+        recipientId,
+        campaignId,
+        "Unresolved {{placeholder}} in the subject or body - fix the campaign template before sending",
+      );
+      return;
+    }
+
     const { email, usedFallback } = await rewriteEmail({
       masterBody: body,
       subject,
@@ -116,9 +155,23 @@ export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
         .filter(Boolean)
         .join("\n\n") || body;
 
-    // (4) Attachment. pdfPath is a bare filename; keep the read inside
-    // UPLOAD_DIR regardless of what was stored.
-    let pdf: Buffer | undefined;
+    // The rewrite is free text from the model; it can echo braces back even
+    // when the substituted input was clean.
+    if (
+      hasUnresolvedPlaceholders(finalSubject) ||
+      hasUnresolvedPlaceholders(finalBody)
+    ) {
+      await failRecipientAndPause(
+        recipientId,
+        campaignId,
+        "Rewritten email still contained a {{placeholder}} - not sent",
+      );
+      return;
+    }
+
+    // (4) Attachment. pdfPath is a bare filename (any allowlisted type, not
+    // just PDF); keep the read inside UPLOAD_DIR regardless of what was stored.
+    let attachment: Buffer | undefined;
     if (campaign.pdfPath) {
       const uploadDir = path.resolve(env.UPLOAD_DIR);
       const pdfFile = path.resolve(uploadDir, path.basename(campaign.pdfPath));
@@ -130,7 +183,7 @@ export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
         return;
       }
       try {
-        pdf = await readFile(pdfFile);
+        attachment = await readFile(pdfFile);
       } catch {
         await prisma.campaignRecipient.updateMany({
           where: { id: recipientId, status: "SENDING" },
@@ -139,6 +192,11 @@ export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
         return;
       }
     }
+
+    // Prefer the name the user uploaded; fall back to the stored name so the
+    // extension — and therefore the Content-Type — survives either way.
+    const attachmentName =
+      campaign.pdfFileName ?? campaign.pdfPath ?? "attachment";
 
     // (5) On a retry, an earlier attempt may have delivered even though its
     // response was lost. Ask Gmail before sending a second copy.
@@ -168,11 +226,13 @@ export async function sendProcessor(job: Job<SendEmailJobData>): Promise<void> {
       subject: finalSubject,
       textBody: finalBody,
       messageId: rfcMessageId,
-      attachment: pdf
+      attachment: attachment
         ? {
-            filename: campaign.pdfFileName ?? "report.pdf",
-            contentType: "application/pdf",
-            data: pdf,
+            filename: attachmentName,
+            // Derived from the stored file name, so a .csv is not mailed out
+            // announcing itself as a PDF.
+            contentType: mimeTypeFor(attachmentName),
+            data: attachment,
           }
         : undefined,
     });

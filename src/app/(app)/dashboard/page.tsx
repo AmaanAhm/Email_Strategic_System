@@ -252,7 +252,10 @@ export default async function DashboardPage({
           <CardTitle>Delivery overview</CardTitle>
           <CardDescription>Across all your campaigns</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        {/* flex-1 so the card's stretched height is actually used: the row
+            makes both cards as tall as "Recent campaigns", and without this
+            the content sat at the top over a large blank area. */}
+        <CardContent className="flex flex-1 flex-col gap-4">
           <div className="flex items-end gap-2">
             <span className="text-4xl font-semibold tabular-nums">
               {deliveryRate === null ? "—" : `${deliveryRate}%`}
@@ -275,28 +278,22 @@ export default async function DashboardPage({
               />
             )}
           </div>
-          <ul className="grid grid-cols-3 gap-2 text-xs">
-            <li className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-gmail-green" />
-              <span className="text-muted-foreground">Sent</span>
-              <span className="ml-auto font-medium tabular-nums">
-                {stats.sent}
-              </span>
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-gmail-red" />
-              <span className="text-muted-foreground">Failed</span>
-              <span className="ml-auto font-medium tabular-nums">
-                {stats.failed}
-              </span>
-            </li>
-            <li className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-gmail-blue/40" />
-              <span className="text-muted-foreground">Left</span>
-              <span className="ml-auto font-medium tabular-nums">
-                {stats.remaining}
-              </span>
-            </li>
+          {/* One row per status. Side by side, "Sent 11 Failed 0 Left 0" ran
+              together and it was not obvious which number belonged to which. */}
+          <ul className="mt-auto divide-y text-sm">
+            {[
+              { label: "Sent", value: stats.sent, dot: "bg-gmail-green" },
+              { label: "Failed", value: stats.failed, dot: "bg-gmail-red" },
+              { label: "Left", value: stats.remaining, dot: "bg-gmail-blue/40" },
+            ].map(({ label, value, dot }) => (
+              <li key={label} className="flex items-center gap-2 py-2.5">
+                <span className={`size-2 shrink-0 rounded-full ${dot}`} />
+                <span className="text-muted-foreground">{label}</span>
+                <span className="ml-auto font-medium tabular-nums">
+                  {value}
+                </span>
+              </li>
+            ))}
           </ul>
         </CardContent>
       </Card>

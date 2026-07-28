@@ -1,5 +1,4 @@
 import { Download, TriangleAlert } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -24,19 +23,18 @@ export function SampleSheetButton({
 
 export function SampleSheetNote({ className }: { className?: string }) {
   return (
-    <Alert
-      className={cn("border-amber-500/40 bg-amber-500/10 text-left", className)}
+    <p
+      className={cn(
+        "flex items-start gap-1.5 text-left text-xs text-amber-700 dark:text-amber-400/90",
+        className,
+      )}
     >
-      <TriangleAlert className="text-amber-600 dark:text-amber-400" />
-      <AlertTitle className="text-amber-900 dark:text-amber-200">
-        Sample data only — do not send emails to these addresses
-      </AlertTitle>
-      <AlertDescription className="text-amber-900/80 dark:text-amber-200/80">
-        The names and email addresses in the sample sheet are placeholders on
-        the reserved <code className="font-mono">example.com</code> domain. They
-        exist to show the required column format. Replace every row with your
-        own contacts before importing.
-      </AlertDescription>
-    </Alert>
+      <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+      <span>
+        Sample rows are placeholders on{" "}
+        <code className="font-mono">example.com</code> — replace them with your
+        own contacts.
+      </span>
+    </p>
   );
 }

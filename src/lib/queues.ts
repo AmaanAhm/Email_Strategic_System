@@ -1,11 +1,18 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "@/lib/env";
-import { TICK_QUEUE, EMAIL_QUEUE, type SendEmailJobData } from "@/lib/types";
+import {
+  TICK_QUEUE,
+  EMAIL_QUEUE,
+  VERIFY_QUEUE,
+  type SendEmailJobData,
+  type VerifyJobData,
+} from "@/lib/types";
 
 let redisConnection: IORedis | null = null;
 let tickQueue: Queue | null = null;
 let emailQueue: Queue<SendEmailJobData> | null = null;
+let verifyQueue: Queue<VerifyJobData> | null = null;
 
 export function getRedisConnection(): IORedis {
   if (!redisConnection) {
@@ -39,4 +46,13 @@ export function getEmailQueue(): Queue<SendEmailJobData> {
     });
   }
   return emailQueue;
+}
+
+export function getVerifyQueue(): Queue<VerifyJobData> {
+  if (!verifyQueue) {
+    verifyQueue = new Queue<VerifyJobData>(VERIFY_QUEUE, {
+      connection: getBullConnection(),
+    });
+  }
+  return verifyQueue;
 }

@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Upload } from "lucide-react";
+import { ArrowLeft, Upload } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +15,7 @@ import {
   ContactsTable,
   type SerializedContact,
 } from "@/components/contacts/contacts-table";
+import { VerifyGroupButton } from "@/components/verify/verify-group-button";
 
 export default async function ContactGroupPage({
   params,
@@ -30,11 +32,18 @@ export default async function ContactGroupPage({
   });
   if (!group) notFound();
 
-  const contacts = await prisma.contact.findMany({
-    where: { groupId, userId },
-    orderBy: { createdAt: "desc" },
-    take: 2000,
-  });
+  const [contacts, undeliverableCount] = await Promise.all([
+    prisma.contact.findMany({
+      where: { groupId, userId },
+      orderBy: { createdAt: "desc" },
+      take: 2000,
+    }),
+    // Drives the "remove dead" button. Only ever counts contacts a mail server
+    // explicitly rejected — never RISKY ones.
+    prisma.contact.count({
+      where: { groupId, userId, verifyVerdict: "UNDELIVERABLE" },
+    }),
+  ]);
 
   const serialized: SerializedContact[] = contacts.map((c) => ({
     id: c.id,
@@ -48,14 +57,30 @@ export default async function ContactGroupPage({
 
   return (
     <div className="space-y-6">
+      <div>
+        <Link
+          href="/contacts"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Contacts
+        </Link>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="truncate text-2xl font-semibold tracking-tight">
             {group.name}
           </h1>
           <Badge variant="secondary">{contacts.length}</Badge>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {contacts.length > 0 && (
+            <VerifyGroupButton
+              groupId={groupId}
+              undeliverableCount={undeliverableCount}
+            />
+          )}
           {contacts.length > 0 && <ImportDialog groupId={groupId} />}
           <DeleteGroupButton groupId={groupId} name={group.name} />
         </div>

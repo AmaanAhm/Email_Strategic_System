@@ -21,7 +21,9 @@ model User {
   contacts      Contact[]
   contactGroups ContactGroup[]
   campaigns     Campaign[]
+  campaignDrafts CampaignDraft[]
   senders       SenderIdentity[]
+  verificationRuns VerificationRun[]
 }
 
 // A connected Google account authorized to send email. Distinct from the
@@ -104,6 +106,10 @@ model ContactGroup {
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   contacts Contact[]
+  /// Runs that checked the contacts already in this group.
+  verificationRuns VerificationRun[] @relation("VerifiedGroup")
+  /// Runs whose clean rows were saved into this group.
+  createdByRuns    VerificationRun[] @relation("GroupCreatedFromRun")
 
   @@index([userId])
 }
@@ -119,6 +125,13 @@ model Contact {
   industry  String?
   createdAt DateTime @default(now())
 
+  /// Last deliverability verdict, written by a verification run. Null until
+  /// the group has been verified. Advisory only — nothing is ever deleted on
+  /// the strength of it without the user confirming.
+  verifyVerdict VerifyVerdict?
+  verifyReason  String?
+  verifiedAt    DateTime?
+
   user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   group      ContactGroup        @relation(fields: [groupId], references: [id], onDelete: Cascade)
   recipients CampaignRecipient[]
@@ -126,6 +139,7 @@ model Contact {
   @@unique([groupId, email])
   @@index([userId, createdAt])
   @@index([groupId])
+  @@index([groupId, verifyVerdict])
 }
 
 enum CampaignStatus {
@@ -166,6 +180,128 @@ model Campaign {
   @@index([userId, createdAt])
   @@index([status])
   @@index([senderIdentityId])
+}
+
+/// A campaign form saved before it was finished.
+///
+/// Deliberately its own table rather than a Campaign with nullable columns: a
+/// draft is incomplete by definition, and relaxing Campaign's required fields
+/// would let an unfinished record reach the send worker. Nothing here is
+/// sendable — there are no recipients and no schedule until it is submitted
+/// through createCampaign, which validates as usual.
+///
+/// The form snapshot is JSON so adding a field to the form does not require a
+/// migration; every read validates it and tolerates missing keys.
+model CampaignDraft {
+  id        String   @id @default(cuid())
+  userId    String
+  /// Campaign name at save time, for the drafts list. Blank until typed.
+  name      String?
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+}
+
+// ---------- Email verification ----------
+
+enum VerifySource {
+  FILE
+  CONTACT_GROUP
+}
+
+enum VerifyRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// Deliverability verdict for one address.
+///
+/// Three states, not two, and the middle one carries the weight. A mail
+/// server that refuses to answer — because the domain accepts everything,
+/// because it greylisted us, because our IP is on a blocklist — has said
+/// nothing about the mailbox. Collapsing that into UNDELIVERABLE would throw
+/// away reachable people, so it gets its own bucket.
+enum VerifyVerdict {
+  PENDING
+  /// A mail server affirmatively accepted this address.
+  DELIVERABLE
+  /// Provably cannot receive mail: bad syntax, dead domain, no such mailbox.
+  UNDELIVERABLE
+  /// Unconfirmable: catch-all domain, greylisting, blocked IP, timeout, full
+  /// mailbox, disposable provider.
+  RISKY
+}
+
+/// One verification job: either an uploaded sheet or an existing contact group.
+model VerificationRun {
+  id        String          @id @default(cuid())
+  userId    String
+  source    VerifySource
+  /// Upload name, used for the results heading and the download filenames.
+  fileName  String?
+  /// Set when source = CONTACT_GROUP.
+  groupId   String?
+  /// The contact group this run's clean rows were saved into, if any.
+  ///
+  /// Exists to make saving idempotent: without it the same run could be saved
+  /// over and over, leaving a pile of identical groups in Contacts. SetNull on
+  /// delete, so removing the group legitimately makes the option available again.
+  createdGroupId String?
+  /// Original column headers in order. The output sheet is rebuilt from this,
+  /// so a run can reproduce the uploaded file exactly minus the bad rows.
+  headers   Json
+  /// Which column holds the address, so a typo-corrected address can be
+  /// written back into the right cell when the output sheet is built.
+  emailIndex Int            @default(0)
+  status    VerifyRunStatus @default(QUEUED)
+  total     Int             @default(0)
+  /// Rows with a final verdict. Drives the progress bar; safe to resume from.
+  processed Int             @default(0)
+  error     String?
+  createdAt DateTime        @default(now())
+  startedAt DateTime?
+  completedAt DateTime?
+
+  user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group ContactGroup?     @relation("VerifiedGroup", fields: [groupId], references: [id], onDelete: SetNull)
+  createdGroup ContactGroup? @relation("GroupCreatedFromRun", fields: [createdGroupId], references: [id], onDelete: SetNull)
+  rows  VerificationRow[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model VerificationRow {
+  id        String        @id @default(cuid())
+  runId     String
+  /// Position in the uploaded sheet, so output keeps the original row order.
+  position  Int
+  email     String
+  /// The address actually probed, when it differs from `email` because a
+  /// known domain typo was repaired first. The verdict belongs to *this*
+  /// address, so it is what the output sheet must carry — handing back the
+  /// misspelling would put a known-bouncing address in the clean file.
+  probedEmail String?
+  /// The whole original row as a string array aligned to the run's headers.
+  /// Stored verbatim: this feature's promise is that no column is lost.
+  cells     Json
+  /// Set when source = CONTACT_GROUP, so verdicts can be written back.
+  contactId String?
+  verdict   VerifyVerdict @default(PENDING)
+  reason    String?
+  detail    String?
+
+  run VerificationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, position])
+  @@index([runId, verdict])
 }
 
 enum RecipientStatus {

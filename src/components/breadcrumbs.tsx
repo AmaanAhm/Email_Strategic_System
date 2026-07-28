@@ -9,6 +9,7 @@ const LABELS: Record<string, string> = {
   contacts: "Contacts",
   campaigns: "Campaigns",
   senders: "Senders",
+  verify: "Verify your contacts",
   new: "New campaign",
 };
 
@@ -18,6 +19,8 @@ function labelFor(segment: string, prev: string | undefined): string {
   if (prev === "campaigns") return "Details";
   // A dynamic id under /contacts → a contact group page.
   if (prev === "contacts") return "Group";
+  // A dynamic id under /verify → one verification run.
+  if (prev === "verify") return "Results";
   return segment.charAt(0).toUpperCase() + segment.slice(1);
 }
 

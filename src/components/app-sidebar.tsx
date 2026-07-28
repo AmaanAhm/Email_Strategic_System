@@ -2,21 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AtSign, LayoutDashboard, Mail, Plus, Send, Users } from "lucide-react";
+import {
+  AtSign,
+  FilePenLine,
+  LayoutDashboard,
+  Mail,
+  MailCheck,
+  Plus,
+  Send,
+  Users,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  // Verify sits ahead of Contacts: cleaning a list is what you do before you
+  // import it, so the nav follows the order of the work.
+  { href: "/verify", label: "Verify your contacts", icon: MailCheck },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/campaigns", label: "Campaigns", icon: Mail },
+  { href: "/drafts", label: "Drafts", icon: FilePenLine },
   { href: "/senders", label: "Senders", icon: AtSign },
 ] as const;
 
-export function AppSidebar() {
+export function AppSidebar({ draftCount = 0 }: { draftCount?: number }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(`${href}/`);
+  // Only Drafts carries a count, the way a mail client shows unsent items.
+  const badgeFor = (href: string) =>
+    href === "/drafts" && draftCount > 0 ? draftCount : null;
 
   return (
     <>
@@ -52,6 +68,11 @@ export function AppSidebar() {
             >
               <Icon className="size-4" />
               {label}
+              {badgeFor(href) !== null && (
+                <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+                  {badgeFor(href)}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
@@ -81,6 +102,11 @@ export function AppSidebar() {
           >
             <Icon className="size-4" />
             {label}
+            {badgeFor(href) !== null && (
+              <span className="rounded-full bg-muted px-1.5 text-xs font-semibold">
+                {badgeFor(href)}
+              </span>
+            )}
           </Link>
         ))}
         <Button asChild size="sm" className="ml-auto shrink-0 gap-1.5">

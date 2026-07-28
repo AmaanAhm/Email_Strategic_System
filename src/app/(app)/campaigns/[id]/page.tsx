@@ -29,6 +29,7 @@ import {
   sendCampaignNow,
 } from "@/app/(app)/campaigns/actions";
 import { AutoRefresh } from "@/components/campaigns/auto-refresh";
+import { DeleteCampaignButton } from "@/components/campaigns/delete-campaign-button";
 import { RecipientTable } from "@/components/campaigns/recipient-table";
 import { StatCards } from "@/components/dashboard/stat-cards";
 import { CampaignStatusBadge } from "@/components/status-badge";
@@ -221,6 +222,14 @@ export default async function CampaignDetailPage({
               </Button>
             </form>
           ) : null}
+          <DeleteCampaignButton
+            id={campaign.id}
+            name={campaign.name}
+            status={campaign.status}
+            sent={stats.sent}
+            variant="button"
+            redirectTo="/campaigns"
+          />
         </div>
       </div>
 

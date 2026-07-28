@@ -5,8 +5,8 @@ export const env = {
   get REDIS_URL(): string {
     return process.env.REDIS_URL ?? "redis://localhost:6379";
   },
-  get ANTHROPIC_MODEL(): string {
-    return process.env.ANTHROPIC_MODEL ?? "claude-opus-4-8";
+  get OPENAI_MODEL(): string {
+    return process.env.OPENAI_MODEL ?? "gpt-5.5";
   },
   get UPLOAD_DIR(): string {
     return process.env.UPLOAD_DIR ?? "./uploads";

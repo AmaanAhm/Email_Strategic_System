@@ -3,22 +3,26 @@
 import { revalidatePath } from "next/cache";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { z } from "zod";
+import type { CampaignStatus } from "@prisma/client";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { computeSchedule } from "@/lib/scheduling";
 import { generateSubjectVariations } from "@/lib/subjects";
 import { resolveSender } from "@/lib/senders";
+import { findTemplateIssues } from "@/lib/template";
+import { STORED_NAME_RE, isAllowedFileName } from "@/lib/attachments";
+import { campaignDraftSchema } from "@/lib/campaign-draft";
 
 const UPDATE_BATCH_SIZE = 200;
 
 /**
- * The upload route hands the client back a bare "<uuid>.pdf" filename, never a
- * path. Only that exact shape is accepted here and stored on the campaign; the
- * worker re-resolves it against UPLOAD_DIR.
+ * The upload route hands the client back a bare "<uuid>.<ext>" filename, never
+ * a path. Only that exact shape, with an allowlisted extension, is accepted
+ * here and stored on the campaign; the worker re-resolves it against
+ * UPLOAD_DIR.
  */
-const PDF_PATH_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/;
-/** Display-only name: no path separators, CR/LF or NUL. */
+const PDF_PATH_RE = STORED_NAME_RE;
+/** Display-only name: no path separators, CR/LF or NUL, allowlisted type. */
 const PDF_FILE_NAME_RE = /^[^/\\\r\n\0]+$/;
 
 /** [start, end) UTC instants of the calendar day that `at` falls on in `tz`. */
@@ -79,6 +83,7 @@ const createCampaignSchema = z
       .min(1)
       .max(255)
       .regex(PDF_FILE_NAME_RE, "Invalid attachment file name")
+      .refine(isAllowedFileName, "Unsupported attachment type")
       .optional(),
     senderIdentityId: z.string().min(1).max(60).optional(),
   })
@@ -89,6 +94,25 @@ const createCampaignSchema = z
   .refine((v) => v.minDelaySeconds <= v.maxDelaySeconds, {
     message: "Min delay must be <= max delay",
     path: ["maxDelaySeconds"],
+  })
+  // An unresolvable placeholder is not a cosmetic problem: it ships literal
+  // "{{...}}" to a prospect and cannot be recalled. Refuse to create the
+  // campaign at all rather than discover it after the first send.
+  .superRefine((v, ctx) => {
+    const fields = [
+      ["masterSubject", "Subject"],
+      ["masterBody", "Email body"],
+    ] as const;
+    for (const [field, label] of fields) {
+      const issues = findTemplateIssues(v[field]);
+      if (issues.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${label}: ${issues.join("; ")}`,
+        });
+      }
+    }
   });
 
 function parseContactIds(raw: unknown): string[] | "all" | null {
@@ -101,6 +125,95 @@ function parseContactIds(raw: unknown): string[] | "all" | null {
   } catch {
     return null;
   }
+}
+
+/** Keeps a runaway client from filling the table via the save button. */
+const MAX_DRAFTS_PER_USER = 50;
+
+/**
+ * Save (or update) an unfinished campaign form.
+ *
+ * Deliberately does not validate the way createCampaign does — the whole point
+ * is to keep work that is not yet valid. Nothing saved here can send: drafts
+ * have no recipients and no schedule until they go through createCampaign.
+ */
+export async function saveCampaignDraft(
+  draftId: string | null,
+  raw: unknown,
+): Promise<{ id: string } | { error: string }> {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Unauthorized" };
+  const userId = session.user.id;
+
+  const parsed = campaignDraftSchema.safeParse(raw);
+  if (!parsed.success) return { error: "Could not save this draft" };
+  const data = parsed.data;
+  const name = data.name.trim() || null;
+
+  if (draftId) {
+    // Scoped to the user so an id from another account cannot be overwritten.
+    const updated = await prisma.campaignDraft.updateMany({
+      where: { id: draftId, userId },
+      data: { name, data },
+    });
+    if (updated.count > 0) {
+      revalidatePath("/campaigns");
+      revalidatePath("/campaigns/new");
+      return { id: draftId };
+    }
+    // Fall through: the draft was deleted in another tab, so save a new one
+    // rather than silently discarding the user's work.
+  }
+
+  const created = await prisma.campaignDraft.create({
+    data: { userId, name, data },
+  });
+
+  const stale = await prisma.campaignDraft.findMany({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+    skip: MAX_DRAFTS_PER_USER,
+    select: { id: true },
+  });
+  if (stale.length > 0) {
+    await prisma.campaignDraft.deleteMany({
+      where: { id: { in: stale.map((d) => d.id) }, userId },
+    });
+  }
+
+  revalidatePath("/campaigns");
+  revalidatePath("/campaigns/new");
+  return { id: created.id };
+}
+
+export async function deleteCampaignDraft(
+  id: string,
+): Promise<{ error: string } | void> {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Unauthorized" };
+
+  await prisma.campaignDraft.deleteMany({
+    where: { id, userId: session.user.id },
+  });
+  revalidatePath("/campaigns");
+  revalidatePath("/campaigns/new");
+}
+
+/**
+ * Returns the existing campaign name that collides with `name`, or null.
+ *
+ * `mode: "insensitive"` maps to Postgres ILIKE, so this catches case variants
+ * that a plain unique index would let through.
+ */
+async function findNameClash(
+  userId: string,
+  name: string,
+): Promise<string | null> {
+  const existing = await prisma.campaign.findFirst({
+    where: { userId, name: { equals: name.trim(), mode: "insensitive" } },
+    select: { name: true },
+  });
+  return existing?.name ?? null;
 }
 
 export async function createCampaign(
@@ -135,6 +248,16 @@ export async function createCampaign(
     return { error: first ? first.message : "Invalid form data" };
   }
   const data = parsed.data;
+
+  // Names must be distinct per user. Compared case- and whitespace-insensitively
+  // because "Testing" and "testing " are the same campaign to a human, and a
+  // list of near-identical names is impossible to tell apart later.
+  const clash = await findNameClash(userId, data.name);
+  if (clash) {
+    return {
+      error: `You already have a campaign called “${clash}”. Pick a different name.`,
+    };
+  }
 
   const contactIds = parseContactIds(formData.get("contactIds"));
   if (contactIds === null) return { error: "Invalid contact selection" };
@@ -430,6 +553,50 @@ export async function resumeCampaign(id: string): Promise<void> {
 
   revalidatePath("/campaigns");
   revalidatePath(`/campaigns/${id}`);
+}
+
+/**
+ * Statuses a campaign may be deleted from.
+ *
+ * A campaign that is still live is deliberately excluded — it has queued jobs
+ * and a schedule in flight, and deleting it mid-flight would strand them.
+ * Cancel first, which stops the sending, then delete.
+ */
+const DELETABLE_STATUSES: CampaignStatus[] = ["DRAFT", "COMPLETED", "CANCELLED"];
+
+/**
+ * Permanently removes a campaign and its per-recipient send record.
+ *
+ * The recipient rows cascade, and they are the only record of what was
+ * actually sent to whom — so this is genuinely destructive for a campaign
+ * that already ran, and the UI confirms before calling it. Contacts are
+ * untouched: recipients hold a snapshot, and the contact relation is SetNull.
+ */
+export async function deleteCampaign(
+  id: string,
+): Promise<{ error: string } | void> {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Unauthorized" };
+  const userId = session.user.id;
+
+  const campaign = await prisma.campaign.findFirst({
+    where: { id, userId },
+    select: { status: true },
+  });
+  if (!campaign) return { error: "Campaign not found" };
+
+  if (!DELETABLE_STATUSES.includes(campaign.status)) {
+    return {
+      error:
+        "This campaign is still active. Cancel it first, then it can be deleted.",
+    };
+  }
+
+  // Scoped to the owner so a guessed id cannot delete someone else's campaign.
+  await prisma.campaign.deleteMany({ where: { id, userId } });
+
+  revalidatePath("/campaigns");
+  revalidatePath("/dashboard");
 }
 
 export async function cancelCampaign(id: string): Promise<void> {

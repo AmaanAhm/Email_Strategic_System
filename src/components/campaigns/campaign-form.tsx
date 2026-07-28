@@ -4,8 +4,20 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 import { toast } from "sonner";
-import { FileText, Loader2, Paperclip, X } from "lucide-react";
-import { createCampaign } from "@/app/(app)/campaigns/actions";
+import {
+  Check,
+  FileText,
+  Loader2,
+  Paperclip,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import {
+  createCampaign,
+  deleteCampaignDraft,
+  saveCampaignDraft,
+} from "@/app/(app)/campaigns/actions";
+import type { CampaignDraftData } from "@/lib/campaign-draft";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,10 +36,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { findTemplateIssues, TEMPLATE_VARIABLES } from "@/lib/template";
+import {
+  ACCEPT_ATTRIBUTE,
+  MAX_ATTACHMENT_BYTES,
+  allowedTypesSummary,
+  isAllowedFileName,
+} from "@/lib/attachments";
 
-const MAX_PDF_BYTES = 10 * 1024 * 1024;
-const BODY_VARIABLES = ["name", "company", "industry", "website"] as const;
-const SUBJECT_VARIABLES = ["name", "company"] as const;
+// Offer exactly what validation accepts — a shorter chip list reads as "these
+// are the only ones that work" and pushes people to invent their own.
+const BODY_VARIABLES = TEMPLATE_VARIABLES;
+const SUBJECT_VARIABLES = TEMPLATE_VARIABLES;
+
+/**
+ * Quiet period after the last keystroke before a draft is written. Long enough
+ * that ordinary typing is one save, short enough that clicking away in a hurry
+ * has usually already been captured.
+ */
+const DRAFT_SAVE_DELAY_MS = 900;
 
 interface ContactOption {
   id: string;
@@ -61,6 +88,10 @@ interface CampaignFormProps {
   groups: GroupOption[];
   senders: SenderOption[];
   defaultTimezone: string;
+  /** Set when resuming a saved draft; subsequent saves update this row. */
+  draftId?: string | null;
+  /** Loaded server-side, so resuming never causes a hydration mismatch. */
+  initialDraft?: CampaignDraftData | null;
 }
 
 function pad(n: number): string {
@@ -93,46 +124,93 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function TemplateIssues({ issues }: { issues: string[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+      <div className="text-xs text-destructive">
+        {issues.map((issue) => (
+          <p key={issue}>{issue}</p>
+        ))}
+        <p className="mt-1 opacity-80">
+          Recipients would receive these characters literally. Use only{" "}
+          <span className="font-mono">
+            {TEMPLATE_VARIABLES.map((v) => `{{${v}}}`).join(", ")}
+          </span>
+          .
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function CampaignForm({
   contacts,
   groups,
   senders,
   defaultTimezone,
+  draftId = null,
+  initialDraft = null,
 }: CampaignFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = React.useTransition();
+  // Tracks which row to update. Starts as the resumed draft, and is set after
+  // the first save so later saves update instead of piling up new rows.
+  const [currentDraftId, setCurrentDraftId] = React.useState(draftId);
+  const resumingSavedDraft = draftId !== null;
 
   // Basics
-  const [name, setName] = React.useState("");
-  const [senderId, setSenderId] = React.useState(
-    () => senders.find((s) => s.isDefault)?.id ?? senders[0]?.id ?? "",
-  );
+  const [name, setName] = React.useState(initialDraft?.name ?? "");
+  const [senderId, setSenderId] = React.useState(() => {
+    const saved = initialDraft?.senderId;
+    if (saved && senders.some((s) => s.id === saved)) return saved;
+    return senders.find((s) => s.isDefault)?.id ?? senders[0]?.id ?? "";
+  });
 
   // Email
-  const [masterSubject, setMasterSubject] = React.useState("");
-  const [masterBody, setMasterBody] = React.useState("");
+  const [masterSubject, setMasterSubject] = React.useState(
+    initialDraft?.masterSubject ?? "",
+  );
+  const [masterBody, setMasterBody] = React.useState(
+    initialDraft?.masterBody ?? "",
+  );
   const subjectRef = React.useRef<HTMLInputElement>(null);
   const bodyRef = React.useRef<HTMLTextAreaElement>(null);
 
   // Attachment
-  const [pdf, setPdf] = React.useState<UploadedPdf | null>(null);
+  const [pdf, setPdf] = React.useState<UploadedPdf | null>(
+    initialDraft?.pdf ?? null,
+  );
   const [uploading, setUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Recipients
   const [recipientMode, setRecipientMode] = React.useState<"all" | "group">(
-    "all",
+    initialDraft?.recipientMode ?? "all",
   );
-  const [selectedGroupId, setSelectedGroupId] = React.useState("");
+  const [selectedGroupId, setSelectedGroupId] = React.useState(() => {
+    const saved = initialDraft?.selectedGroupId;
+    // A group deleted since the draft was saved must not leave the Select stuck.
+    return saved && groups.some((g) => g.id === saved) ? saved : "";
+  });
 
   // Schedule
   const [startMode, setStartMode] = React.useState<"immediate" | "scheduled">(
-    "immediate",
+    initialDraft?.startMode ?? "immediate",
   );
-  const [startDate, setStartDate] = React.useState("");
-  const [startHour, setStartHour] = React.useState("");
-  const [startMinute, setStartMinute] = React.useState("");
-  const [timezone, setTimezone] = React.useState(defaultTimezone);
+  const [startDate, setStartDate] = React.useState(
+    initialDraft?.startDate ?? "",
+  );
+  const [startHour, setStartHour] = React.useState(
+    initialDraft?.startHour ?? "",
+  );
+  const [startMinute, setStartMinute] = React.useState(
+    initialDraft?.startMinute ?? "",
+  );
+  const [timezone, setTimezone] = React.useState(
+    initialDraft?.timezone || defaultTimezone,
+  );
 
   // Switching to a scheduled start pre-fills the manual fields with "about now"
   // in the campaign timezone. Computed here (a user event, post-mount) rather
@@ -149,11 +227,177 @@ export function CampaignForm({
     }
   }
 
-  const [workStartHour, setWorkStartHour] = React.useState("9");
-  const [workEndHour, setWorkEndHour] = React.useState("18");
-  const [minDelaySeconds, setMinDelaySeconds] = React.useState("120");
-  const [maxDelaySeconds, setMaxDelaySeconds] = React.useState("480");
-  const [dailyLimit, setDailyLimit] = React.useState("100");
+  const [workStartHour, setWorkStartHour] = React.useState(
+    initialDraft?.workStartHour ?? "9",
+  );
+  const [workEndHour, setWorkEndHour] = React.useState(
+    initialDraft?.workEndHour ?? "18",
+  );
+  const [minDelaySeconds, setMinDelaySeconds] = React.useState(
+    initialDraft?.minDelaySeconds ?? "120",
+  );
+  const [maxDelaySeconds, setMaxDelaySeconds] = React.useState(
+    initialDraft?.maxDelaySeconds ?? "480",
+  );
+  const [dailyLimit, setDailyLimit] = React.useState(
+    initialDraft?.dailyLimit ?? "100",
+  );
+
+  // ---- Automatic draft saving -------------------------------------------
+  //
+  // No save button by design: work is persisted on its own, the way a mail
+  // client keeps an unsent compose. Storage is the server (not localStorage)
+  // so the draft is one thing, visible in the Drafts list from any device.
+
+  const draftState = {
+    name,
+    senderId,
+    masterSubject,
+    masterBody,
+    pdf,
+    recipientMode,
+    selectedGroupId,
+    startMode,
+    startDate,
+    startHour,
+    startMinute,
+    timezone,
+    workStartHour,
+    workEndHour,
+    minDelaySeconds,
+    maxDelaySeconds,
+    dailyLimit,
+  };
+  const draftJson = JSON.stringify(draftState);
+
+  // Only what a person actually typed makes a draft. Schedule defaults alone
+  // would turn every visit to this page into a row in the Drafts list.
+  const hasAnyContent =
+    name.trim() !== "" ||
+    masterSubject.trim() !== "" ||
+    masterBody.trim() !== "" ||
+    pdf !== null;
+
+  const [saveState, setSaveState] = React.useState<"idle" | "saving" | "saved">(
+    resumingSavedDraft ? "saved" : "idle",
+  );
+  // Refs, not state: these are read inside timers and the unmount cleanup,
+  // where a stale closure would save the wrong snapshot or duplicate a row.
+  const draftIdRef = React.useRef(draftId);
+  const savedJsonRef = React.useRef<string | null>(
+    resumingSavedDraft ? draftJson : null,
+  );
+  const latestRef = React.useRef({ json: draftJson, hasAnyContent });
+  const submittedRef = React.useRef(false);
+  /**
+   * Tail of the save queue. Saves must not overlap: the row id only exists
+   * once the first one returns, so two in flight together would each create a
+   * draft and the user would find duplicates in the list.
+   */
+  const queueRef = React.useRef<Promise<unknown>>(Promise.resolve());
+
+  React.useEffect(() => {
+    latestRef.current = { json: draftJson, hasAnyContent };
+  }, [draftJson, hasAnyContent]);
+
+  /** Chain onto the queue so writes for one form are strictly ordered. */
+  const enqueue = React.useCallback(
+    <T,>(work: () => Promise<T>): Promise<T> => {
+      const next = queueRef.current.then(work, work);
+      // Swallow here only for the queue's own chain; callers still see errors.
+      queueRef.current = next.catch(() => undefined);
+      return next;
+    },
+    [],
+  );
+
+  const persistDraft = React.useCallback(
+    async (snapshot: string) => {
+      setSaveState("saving");
+      try {
+        await enqueue(async () => {
+          // Read inside the queued work, not before it: an earlier save may
+          // have assigned the id while this one was waiting its turn.
+          const wasNew = draftIdRef.current === null;
+          if (snapshot === savedJsonRef.current) return;
+          const result = await saveCampaignDraft(
+            draftIdRef.current,
+            JSON.parse(snapshot) as CampaignDraftData,
+          );
+          if ("error" in result) {
+            setSaveState("idle");
+            return;
+          }
+          draftIdRef.current = result.id;
+          savedJsonRef.current = snapshot;
+          setCurrentDraftId(result.id);
+          setSaveState("saved");
+          // Only on creation: refreshing on every keystroke-triggered save
+          // would refetch the page tree for a count that has not changed.
+          if (wasNew) router.refresh();
+        });
+      } catch {
+        // Offline or a server hiccup. Leave savedJsonRef alone so the next
+        // change retries rather than assuming this snapshot is stored.
+        setSaveState("idle");
+      }
+    },
+    [enqueue, router],
+  );
+
+  React.useEffect(() => {
+    if (submittedRef.current) return;
+
+    // Emptying the form discards the draft, as deleting a compose does.
+    if (!hasAnyContent) {
+      if (draftIdRef.current === null) return;
+      const id = draftIdRef.current;
+      const timer = setTimeout(() => {
+        draftIdRef.current = null;
+        savedJsonRef.current = null;
+        setCurrentDraftId(null);
+        setSaveState("idle");
+        // Queued as well, so a delete cannot overtake a save still in flight
+        // and leave the row it was about to write behind.
+        void enqueue(() => deleteCampaignDraft(id)).then(() => router.refresh());
+      }, DRAFT_SAVE_DELAY_MS);
+      return () => clearTimeout(timer);
+    }
+
+    if (draftJson === savedJsonRef.current) return;
+    const timer = setTimeout(() => void persistDraft(draftJson), DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [draftJson, hasAnyContent, persistDraft, enqueue, router]);
+
+  // Leaving the page mid-edit is the exact case this feature exists for, and
+  // it is also when the debounce timer gets cancelled. Flush on the way out.
+  React.useEffect(() => {
+    return () => {
+      const { json, hasAnyContent: had } = latestRef.current;
+      if (submittedRef.current || !had || json === savedJsonRef.current) return;
+      // Through the queue: the debounced save that was already running must
+      // finish and set the id first, or this flush creates a second draft.
+      void enqueue(async () => {
+        if (json === savedJsonRef.current) return;
+        await saveCampaignDraft(
+          draftIdRef.current,
+          JSON.parse(json) as CampaignDraftData,
+        );
+      });
+    };
+  }, [enqueue]);
+
+
+  // A bad placeholder is caught while typing — once an email is sent with
+  // literal "{{...}}" in it there is no way to take it back.
+  const subjectIssues = React.useMemo(
+    () => findTemplateIssues(masterSubject),
+    [masterSubject],
+  );
+  const bodyIssues = React.useMemo(
+    () => findTemplateIssues(masterBody),
+    [masterBody],
+  );
 
   const timezones = React.useMemo<string[]>(() => {
     try {
@@ -191,19 +435,22 @@ export function CampaignForm({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("Only PDF files are supported");
+    if (!isAllowedFileName(file.name)) {
+      toast.error(`Unsupported file type. Allowed: ${allowedTypesSummary()}`);
       return;
     }
-    if (file.size > MAX_PDF_BYTES) {
-      toast.error("PDF is too large (max 10MB)");
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast.error("File is too large (max 10MB)");
       return;
     }
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/uploads/pdf", { method: "POST", body: fd });
+      const res = await fetch("/api/uploads/attachment", {
+        method: "POST",
+        body: fd,
+      });
       const json: { path?: string; fileName?: string; error?: string } =
         await res.json();
       if (!res.ok || !json.path || !json.fileName) {
@@ -211,7 +458,7 @@ export function CampaignForm({
         return;
       }
       setPdf({ path: json.path, fileName: json.fileName, size: file.size });
-      toast.success("PDF attached");
+      toast.success("File attached");
     } catch {
       toast.error("Upload failed");
     } finally {
@@ -235,6 +482,12 @@ export function CampaignForm({
     if (!name.trim()) return void toast.error("Campaign name is required");
     if (!masterSubject.trim()) return void toast.error("Subject is required");
     if (!masterBody.trim()) return void toast.error("Email body is required");
+    if (subjectIssues.length > 0) {
+      return void toast.error(`Subject: ${subjectIssues.join("; ")}`);
+    }
+    if (bodyIssues.length > 0) {
+      return void toast.error(`Email body: ${bodyIssues.join("; ")}`);
+    }
     const startIso =
       startMode === "immediate"
         ? new Date().toISOString()
@@ -294,6 +547,10 @@ export function CampaignForm({
       if ("error" in result) {
         toast.error(result.error);
       } else {
+        // Set before the await so the unmount flush cannot race the redirect
+        // and resurrect a draft for a campaign that now exists.
+        submittedRef.current = true;
+        if (draftIdRef.current) await deleteCampaignDraft(draftIdRef.current);
         toast.success("Campaign created");
         router.push(`/campaigns/${result.id}`);
       }
@@ -401,6 +658,7 @@ export function CampaignForm({
                 </Button>
               ))}
             </div>
+            <TemplateIssues issues={subjectIssues} />
           </div>
 
           <div className="grid gap-2">
@@ -431,6 +689,7 @@ export function CampaignForm({
                 </Button>
               ))}
             </div>
+            <TemplateIssues issues={bodyIssues} />
             <p className="text-xs text-muted-foreground">
               Variables are filled per recipient, then AI rewrites each email
               with a unique greeting, opening, body, and call to action.
@@ -444,14 +703,15 @@ export function CampaignForm({
         <CardHeader>
           <CardTitle>Attachment</CardTitle>
           <CardDescription>
-            Optionally attach one PDF (max 10MB). It is sent with every email.
+            Optionally attach one file (max 10MB). It is sent with every email.
+            Supported: {allowedTypesSummary()}.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept={ACCEPT_ATTRIBUTE}
             className="hidden"
             onChange={handleFileChange}
           />
@@ -486,7 +746,7 @@ export function CampaignForm({
               ) : (
                 <Paperclip className="size-4" />
               )}
-              {uploading ? "Uploading..." : "Attach PDF"}
+              {uploading ? "Uploading..." : "Attach file"}
             </Button>
           )}
         </CardContent>
@@ -743,7 +1003,20 @@ export function CampaignForm({
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {saveState === "saving" ? (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" />
+            Saving to Drafts...
+          </p>
+        ) : saveState === "saved" && currentDraftId ? (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            Saved to Drafts. You can leave this page and come back.
+          </p>
+        ) : (
+          <span />
+        )}
         <Button type="submit" disabled={isPending || uploading}>
           {isPending && <Loader2 className="size-4 animate-spin" />}
           {isPending ? "Creating..." : "Create campaign"}

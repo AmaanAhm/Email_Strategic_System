@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { substituteVariables } from "@/lib/template";
+import {
+  findTemplateIssues,
+  hasUnresolvedPlaceholders,
+  substituteVariables,
+} from "@/lib/template";
 import type { ContactRow } from "@/lib/types";
 
 const contact: ContactRow = {
@@ -66,5 +70,81 @@ describe("substituteVariables", () => {
   it("handles templates with no variables", () => {
     expect(substituteVariables("Plain text.", contact)).toBe("Plain text.");
     expect(substituteVariables("", contact)).toBe("");
+  });
+});
+
+describe("hasUnresolvedPlaceholders", () => {
+  it("passes templates that fully resolve", () => {
+    expect(hasUnresolvedPlaceholders("Hi {{name}} at {{company}}")).toBe(false);
+    expect(hasUnresolvedPlaceholders("No variables here")).toBe(false);
+    expect(hasUnresolvedPlaceholders("")).toBe(false);
+  });
+
+  it("does not flag a contact whose optional field is empty", () => {
+    const noWebsite: ContactRow = {
+      name: "Jo",
+      company: "Co",
+      email: "jo@co.com",
+    };
+    expect(hasUnresolvedPlaceholders("Site: {{website}}")).toBe(false);
+    expect(substituteVariables("Site: {{website}}", noWebsite)).toBe("Site: ");
+  });
+
+  it("catches unknown names that would ship literally", () => {
+    expect(hasUnresolvedPlaceholders("Hi {{first_name}}")).toBe(true);
+    expect(hasUnresolvedPlaceholders("Hi {{Company Name}}")).toBe(true);
+    expect(hasUnresolvedPlaceholders("Hi {{name1}}")).toBe(true);
+  });
+
+  it("catches the nested case that reached real inboxes", () => {
+    // Sent as "abc{{Amaan}}ZNX Media" before this check existed.
+    expect(hasUnresolvedPlaceholders("abc{{Amaan{{elhekko}}}}{{name}}")).toBe(
+      true,
+    );
+    expect(hasUnresolvedPlaceholders("{{name}")).toBe(true);
+  });
+});
+
+describe("findTemplateIssues", () => {
+  it("returns nothing for valid templates", () => {
+    expect(findTemplateIssues("Hi {{name}}, about {{company}}")).toEqual([]);
+    expect(findTemplateIssues("{{ NAME }} — {{industry}}")).toEqual([]);
+    expect(findTemplateIssues("")).toEqual([]);
+  });
+
+  it("names the offending placeholder", () => {
+    expect(findTemplateIssues("Hi {{firstname}}")).toContain(
+      "{{firstname}} is not a variable",
+    );
+  });
+
+  it("reports each bad placeholder once", () => {
+    const issues = findTemplateIssues("{{foo}} {{foo}} {{bar}}");
+    expect(issues.filter((i) => i.includes("{{foo}}"))).toHaveLength(1);
+    expect(issues.filter((i) => i.includes("{{bar}}"))).toHaveLength(1);
+  });
+
+  it("unwraps nesting to name every bad placeholder", () => {
+    // A single scan only sees the inner {{elhekko}}; {{Amaan}} is exposed once
+    // that layer is stripped. Both need reporting or the author fixes one and
+    // ships the other.
+    const issues = findTemplateIssues("abc{{Amaan{{elhekko}}}}{{name}}");
+    expect(issues).toContain("{{elhekko}} is not a variable");
+    expect(issues).toContain("{{Amaan}} is not a variable");
+  });
+
+  it("does not cry nesting over a plain misnamed variable", () => {
+    const issues = findTemplateIssues("Hi {{first_name}}, about {{company}}.");
+    expect(issues).toEqual(["{{first_name}} is not a variable"]);
+  });
+
+  it("reports an unclosed brace", () => {
+    expect(findTemplateIssues("Hi {{name}")).toEqual([
+      "braces are unbalanced, so { } characters would be sent literally",
+    ]);
+  });
+
+  it("leaves single braces alone", () => {
+    expect(findTemplateIssues("Cost is {1} unit, hi {{name}}")).toEqual([]);
   });
 });

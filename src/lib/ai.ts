@@ -1,14 +1,14 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import OpenAI from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { env } from "@/lib/env";
 import type { RewriteInput, RewrittenEmail } from "@/lib/types";
 
-let client: Anthropic | null = null;
+let client: OpenAI | null = null;
 
-function getClient(): Anthropic {
+function getClient(): OpenAI {
   if (!client) {
-    client = new Anthropic();
+    client = new OpenAI();
   }
   return client;
 }
@@ -39,6 +39,16 @@ function fallbackResult(input: RewriteInput): {
   };
 }
 
+/**
+ * Falling back silently is what let a missing API key go unnoticed for 13
+ * sends. The campaign still proceeds — an outage should not strand a list —
+ * but the reason is always written to the worker log.
+ */
+function logFallback(stage: string, reason: unknown): void {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  console.warn(`[ai] ${stage} fell back to the master email: ${message}`);
+}
+
 export async function rewriteEmail(
   input: RewriteInput,
 ): Promise<{ email: RewrittenEmail; usedFallback: boolean }> {
@@ -52,6 +62,7 @@ export async function rewriteEmail(
       "Do not invent facts, numbers, or claims not present in the original.",
       "Keep a similar length.",
       "Personalize naturally with the recipient's name/company/industry when it helps.",
+      "Never include template placeholders such as {{name}} or any { } characters in your output.",
       `Sender name for the sign-off: ${senderName}`,
     ].join(" ");
 
@@ -71,20 +82,28 @@ export async function rewriteEmail(
       ...recipientLines,
     ].join("\n");
 
-    const message = await getClient().messages.parse(
+    const completion = await getClient().chat.completions.parse(
       {
-        model: env.ANTHROPIC_MODEL,
-        max_tokens: 2048,
-        thinking: { type: "adaptive" },
-        system,
-        messages: [{ role: "user", content: userContent }],
-        output_config: { format: zodOutputFormat(RewriteSchema) },
+        model: env.OPENAI_MODEL,
+        max_completion_tokens: 4096,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userContent },
+        ],
+        response_format: zodResponseFormat(RewriteSchema, "rewritten_email"),
       },
       { timeout: 60_000 },
     );
 
-    const parsed = message.parsed_output;
+    const choice = completion.choices[0];
+    if (choice?.message.refusal) {
+      logFallback("rewriteEmail", `model refused: ${choice.message.refusal}`);
+      return fallbackResult(input);
+    }
+
+    const parsed = choice?.message.parsed;
     if (!parsed) {
+      logFallback("rewriteEmail", "no parsed output returned");
       return fallbackResult(input);
     }
     const pieces = [
@@ -96,11 +115,13 @@ export async function rewriteEmail(
       parsed.closing,
     ];
     if (pieces.some((p) => typeof p !== "string" || p.trim().length === 0)) {
+      logFallback("rewriteEmail", "model returned an empty section");
       return fallbackResult(input);
     }
 
     return { email: parsed, usedFallback: false };
-  } catch {
+  } catch (err) {
+    logFallback("rewriteEmail", err);
     return fallbackResult(input);
   }
 }

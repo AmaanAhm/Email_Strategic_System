@@ -1,13 +1,13 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import OpenAI from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { env } from "@/lib/env";
 
-let client: Anthropic | null = null;
+let client: OpenAI | null = null;
 
-function getClient(): Anthropic {
+function getClient(): OpenAI {
   if (!client) {
-    client = new Anthropic();
+    client = new OpenAI();
   }
   return client;
 }
@@ -17,11 +17,12 @@ const SubjectsSchema = z.object({
 });
 
 /**
- * Generates subject-line variations for a campaign using Claude.
+ * Generates subject-line variations for a campaign.
  *
  * Never throws: on any failure (API error, timeout, empty/unusable output)
- * it falls back to `[masterSubject]`. On success the returned array always
- * contains the master subject first, followed by up to `count` variations.
+ * it falls back to `[masterSubject]`, logging why. On success the returned
+ * array always contains the master subject first, followed by up to `count`
+ * variations.
  */
 export async function generateSubjectVariations(
   masterSubject: string,
@@ -29,20 +30,22 @@ export async function generateSubjectVariations(
   count = 5,
 ): Promise<string[]> {
   try {
-    const res = await getClient().messages.parse(
+    const completion = await getClient().chat.completions.parse(
       {
-        model: env.ANTHROPIC_MODEL,
-        max_tokens: 1024,
-        thinking: { type: "adaptive" },
-        system: [
-          "You are a professional cold-email subject-line writer.",
-          `Write exactly ${count} distinct subject-line variations of the original subject you are given.`,
-          "Each variation must preserve the same meaning and offer as the original subject, in a professional tone suitable for B2B outreach.",
-          "Avoid clickbait, spam-trigger words (FREE, urgent, act now, !!!, ALL CAPS), and misleading claims.",
-          "The subject may contain template placeholders like {{name}} or {{company}} — keep any placeholders verbatim and unchanged in your variations.",
-          "Keep each variation concise (under 80 characters where possible).",
-        ].join(" "),
+        model: env.OPENAI_MODEL,
+        max_completion_tokens: 2048,
         messages: [
+          {
+            role: "system",
+            content: [
+              "You are a professional cold-email subject-line writer.",
+              `Write exactly ${count} distinct subject-line variations of the original subject you are given.`,
+              "Each variation must preserve the same meaning and offer as the original subject, in a professional tone suitable for B2B outreach.",
+              "Avoid clickbait, spam-trigger words (FREE, urgent, act now, !!!, ALL CAPS), and misleading claims.",
+              "The subject may contain template placeholders like {{name}} or {{company}} — keep any placeholders verbatim and unchanged, and never introduce new ones.",
+              "Keep each variation concise (under 80 characters where possible).",
+            ].join(" "),
+          },
           {
             role: "user",
             content: [
@@ -53,15 +56,22 @@ export async function generateSubjectVariations(
             ].join("\n"),
           },
         ],
-        output_config: {
-          format: zodOutputFormat(SubjectsSchema),
-        },
+        response_format: zodResponseFormat(SubjectsSchema, "subject_variations"),
       },
       { timeout: 60_000 },
     );
 
-    const parsed = res.parsed_output;
+    const choice = completion.choices[0];
+    if (choice?.message.refusal) {
+      console.warn(
+        `[ai] subject variations refused, using the master subject only: ${choice.message.refusal}`,
+      );
+      return [masterSubject];
+    }
+
+    const parsed = choice?.message.parsed;
     if (!parsed) {
+      console.warn("[ai] subject variations returned nothing usable");
       return [masterSubject];
     }
 
@@ -76,7 +86,12 @@ export async function generateSubjectVariations(
       ? usable
       : [masterSubject, ...usable];
     return withMaster.slice(0, count + 1);
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[ai] subject variations failed, using the master subject only: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return [masterSubject];
   }
 }

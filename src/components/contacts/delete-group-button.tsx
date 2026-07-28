@@ -47,14 +47,8 @@ export function DeleteGroupButton({
         onOpenChange={(o) => {
           if (!o && !isPending) setOpen(false);
         }}
-        title="Delete this group?"
-        description={
-          <>
-            This permanently deletes{" "}
-            <span className="font-medium text-foreground">{name}</span> and all
-            its contacts. This can&apos;t be undone.
-          </>
-        }
+        title={`Delete “${name}”?`}
+        description="Its contacts go too."
         confirmLabel="Delete group"
         destructive
         loading={isPending}

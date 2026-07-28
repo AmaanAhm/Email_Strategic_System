@@ -30,19 +30,31 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file");
     const groupId = formData.get("groupId");
+    const newGroupName = formData.get("newGroupName");
 
-    if (typeof groupId !== "string" || !groupId) {
+    // Either import into an existing group, or create one from this file. The
+    // second form exists so a group can never come into being empty.
+    const creatingGroup = typeof newGroupName === "string" && newGroupName.trim().length > 0;
+
+    if (!creatingGroup) {
+      if (typeof groupId !== "string" || !groupId) {
+        return NextResponse.json(
+          { error: "No group specified" },
+          { status: 400 },
+        );
+      }
+      const group = await prisma.contactGroup.findFirst({
+        where: { id: groupId, userId },
+        select: { id: true },
+      });
+      if (!group) {
+        return NextResponse.json({ error: "Group not found" }, { status: 404 });
+      }
+    } else if (newGroupName.trim().length > 80) {
       return NextResponse.json(
-        { error: "No group specified" },
+        { error: "Group name is too long (max 80)" },
         { status: 400 },
       );
-    }
-    const group = await prisma.contactGroup.findFirst({
-      where: { id: groupId, userId },
-      select: { id: true },
-    });
-    if (!group) {
-      return NextResponse.json({ error: "Group not found" }, { status: 404 });
     }
 
     if (!(file instanceof File)) {
@@ -81,16 +93,58 @@ export async function POST(request: NextRequest) {
 
     const { rows, errors } = parsed;
 
-    const created = await prisma.contact.createMany({
-      data: rows.map((r) => ({
+    const contactData = (targetGroupId: string) =>
+      rows.map((r) => ({
         name: r.name,
         company: r.company,
         email: r.email,
         website: r.website ?? null,
         industry: r.industry ?? null,
         userId,
-        groupId,
-      })),
+        groupId: targetGroupId,
+      }));
+
+    if (creatingGroup) {
+      // One transaction: if the file yields no usable contact the group is
+      // rolled back with it, so an empty group cannot be left behind.
+      let outcome: { groupId: string; imported: number };
+      try {
+        outcome = await prisma.$transaction(async (tx) => {
+          const group = await tx.contactGroup.create({
+            data: { userId, name: newGroupName.trim() },
+          });
+          const created = await tx.contact.createMany({
+            data: contactData(group.id),
+            skipDuplicates: true,
+          });
+          if (created.count === 0) throw new Error("NO_USABLE_ROWS");
+          return { groupId: group.id, imported: created.count };
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message === "NO_USABLE_ROWS") {
+          return NextResponse.json(
+            {
+              error:
+                "No valid contacts found in that file, so the group was not created.",
+              errors: errors.slice(0, 10),
+            },
+            { status: 400 },
+          );
+        }
+        throw err;
+      }
+
+      const result: ImportResult & { groupId: string } = {
+        groupId: outcome.groupId,
+        imported: outcome.imported,
+        skippedDuplicates: rows.length - outcome.imported,
+        errors,
+      };
+      return NextResponse.json(result);
+    }
+
+    const created = await prisma.contact.createMany({
+      data: contactData(groupId as string),
       skipDuplicates: true,
     });
 

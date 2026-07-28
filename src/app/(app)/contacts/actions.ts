@@ -4,22 +4,10 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 
-export async function createContactGroup(
-  name: string,
-): Promise<{ id: string } | { error: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Unauthorized" };
-
-  const trimmed = name.trim();
-  if (!trimmed) return { error: "Enter a group name" };
-  if (trimmed.length > 80) return { error: "Group name is too long (max 80)" };
-
-  const group = await prisma.contactGroup.create({
-    data: { userId: session.user.id, name: trimmed },
-  });
-  revalidatePath("/contacts");
-  return { id: group.id };
-}
+// Groups are created only by POST /api/contacts/import with a newGroupName,
+// which creates the group and its contacts in one transaction. There is
+// deliberately no action that creates an empty group: every path to a group
+// goes through a file that has at least one usable contact in it.
 
 export async function deleteContactGroup(
   id: string,

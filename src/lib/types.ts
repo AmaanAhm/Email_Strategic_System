@@ -65,7 +65,23 @@ export interface CampaignStats {
 
 export const TICK_QUEUE = "campaign-tick";
 export const EMAIL_QUEUE = "email-send";
+export const VERIFY_QUEUE = "email-verify";
 
 export interface SendEmailJobData {
   recipientId: string;
+}
+
+export interface VerifyJobData {
+  runId: string;
+}
+
+/** Live counts for the verification progress poller. */
+export interface VerifyStats {
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  total: number;
+  processed: number;
+  deliverable: number;
+  undeliverable: number;
+  risky: number;
+  error: string | null;
 }
