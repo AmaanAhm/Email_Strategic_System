@@ -577,7 +577,6 @@ export function CampaignForm({
               id="campaign-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. July agency outreach"
               maxLength={200}
             />
           </div>
