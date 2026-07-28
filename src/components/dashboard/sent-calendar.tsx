@@ -128,26 +128,39 @@ export function SentCalendar({
                 type="button"
                 disabled={isFuture}
                 onClick={() => navigate(key)}
-                aria-label={key}
+                aria-label={
+                  hasSends ? `${key} — has sends` : key
+                }
                 aria-current={isSelected ? "date" : undefined}
                 className={cn(
-                  "relative flex size-8 items-center justify-center rounded-full text-sm tabular-nums transition-colors",
-                  isFuture && "cursor-not-allowed text-muted-foreground/40",
-                  !isFuture && !isSelected && "hover:bg-accent",
-                  isSelected &&
-                    "bg-primary font-semibold text-primary-foreground",
-                  !isSelected && isToday && "ring-1 ring-primary/50",
+                  "group flex flex-col items-center gap-1",
+                  isFuture && "cursor-not-allowed",
                 )}
               >
-                {d}
-                {hasSends && (
-                  <span
-                    className={cn(
-                      "absolute bottom-1 size-1.5 rounded-full",
-                      isSelected ? "bg-primary-foreground" : "bg-gmail-green",
-                    )}
-                  />
-                )}
+                <span
+                  className={cn(
+                    "flex size-8 items-center justify-center rounded-full text-sm tabular-nums transition-colors",
+                    isFuture && "text-muted-foreground/40",
+                    !isFuture &&
+                      !isSelected &&
+                      "group-hover:bg-accent",
+                    isSelected &&
+                      "bg-primary font-semibold text-primary-foreground",
+                    !isSelected && isToday && "ring-1 ring-primary/50",
+                  )}
+                >
+                  {d}
+                </span>
+                {/* The slot is always rendered, transparent when the day has no
+                    sends, so every week is the same height and the dot never
+                    crowds the digit above it. */}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    hasSends ? "bg-gmail-green" : "bg-transparent",
+                  )}
+                />
               </button>
             </div>
           );
