@@ -2,6 +2,7 @@
 
 Personalized B2B email outreach powered by OpenAI and the official Gmail API.
 
+- **Contact verification** — check a sheet (or an existing group) against real mail servers before you send; get your sheet back with the dead rows removed and every column intact
 - **Contact groups** — organize contacts into named groups; import CSV / Excel (Name, Company, Email, Website, Industry) per group, each with its own searchable table
 - **Multiple senders** — connect several Google accounts and pick which one a campaign sends from (used for the `From` and `Reply-To` headers)
 - **One master email** with `{{name}}`, `{{company}}`, `{{industry}}`, `{{website}}` variables
@@ -19,6 +20,28 @@ Personalized B2B email outreach powered by OpenAI and the official Gmail API.
 Stats, delivery rate, a send calendar (green dots mark days with sends) with a per-campaign breakdown, upcoming sends, and per-sender health.
 
 ![Dashboard](docs/screenshots/dashboard.png)
+
+### Verify your contacts
+
+Upload a `.csv` / `.xlsx` (up to 500 rows) or point it at an existing group. Every
+address is checked against its mail server over SMTP — no mail is ever sent, the
+conversation stops before `DATA`.
+
+Results split three ways, and the middle one carries the weight:
+
+| Verdict | Meaning |
+| --- | --- |
+| **Deliverable** | A mail server affirmatively accepted the address |
+| **Risky** | Nobody would confirm it — catch-all domain, greylisting, a blocked lookup, a full mailbox. Usually a real person, just unprovable |
+| **Undeliverable** | Provably dead — bad syntax, no MX record, or the server said the mailbox does not exist |
+
+Clean and Risky download as separate files, each keeping **every column from your
+sheet in the original order**. Known domain typos (`gmail.co` → `gmail.com`) are
+repaired and the corrected address is what ships.
+
+![Verify runs](docs/screenshots/verify.png)
+
+![Verification results](docs/screenshots/verify-results.png)
 
 ### Contacts — groups and group detail
 
@@ -53,7 +76,7 @@ Next.js 16 (App Router) · Tailwind CSS v4 · shadcn/ui · PostgreSQL + Prisma 6
 - Node.js 20.9+
 - PostgreSQL 16+ and Redis 7+ — either your own, or `docker compose up -d` (uses [docker-compose.yml](docker-compose.yml))
 - A Google Cloud project (for OAuth + Gmail API)
-- An Anthropic API key
+- An OpenAI API key
 
 ## Setup
 
