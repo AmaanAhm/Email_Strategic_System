@@ -205,3 +205,51 @@
     border: 1px solid var(--glass-border);
   }
 }
+
+/* ── Theme change animation ───────────────────────────────────────────────
+ *
+ * The incoming theme is revealed as a circle growing out of the toggle
+ * button. Coordinates and radius are set on <html> by the toggle before the
+ * transition starts.
+ *
+ * A View Transition is used rather than transitioning colours on every
+ * element: it animates one snapshot of the page, so nothing can tear or
+ * animate at a different rate, and it works with `disableTransitionOnChange`
+ * (next-themes suppresses `transition`, not `animation`). Browsers without
+ * the API simply switch instantly, exactly as before.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  /* The default cross-fade would muddy the circular wipe. */
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Outgoing theme sits still underneath while the new one is clipped over it. */
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+  animation: theme-reveal 450ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-x, 50%) var(--theme-y, 0));
+  }
+  to {
+    clip-path: circle(
+      var(--theme-r, 150vmax) at var(--theme-x, 50%) var(--theme-y, 0)
+    );
+  }
+}
+
+/* The toggle skips the transition entirely when this is set, but a user can
+ * change the preference mid-session, so the CSS holds the line too. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
